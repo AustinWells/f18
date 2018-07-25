@@ -211,7 +211,7 @@ auto Unary<CRTP, RESULT, A>::Fold(FoldingContext &context)
   if (std::optional<OperandScalarConstant> c{operand_->Fold(context)}) {
     return static_cast<CRTP *>(this)->FoldScalar(context, *c);
   }
-  return {};
+  return std::nullopt;
 }
 
 template<typename CRTP, typename RESULT, typename A, typename B>
@@ -222,7 +222,7 @@ auto Binary<CRTP, RESULT, A, B>::Fold(FoldingContext &context)
   if (lc.has_value() && rc.has_value()) {
     return static_cast<CRTP *>(this)->FoldScalar(context, *lc, *rc);
   }
-  return {};
+  return std::nullopt;
 }
 
 template<int KIND>
@@ -233,7 +233,7 @@ auto IntegerExpr<KIND>::ConvertInteger::FoldScalar(FoldingContext &context,
         auto converted{Scalar::ConvertSigned(x)};
         if (converted.overflow) {
           context.messages.Say("integer conversion overflowed"_en_US);
-          return {};
+          return std::nullopt;
         }
         return {std::move(converted.value)};
       },
@@ -248,12 +248,12 @@ auto IntegerExpr<KIND>::ConvertReal::FoldScalar(FoldingContext &context,
         auto converted{x.template ToInteger<Scalar>()};
         if (converted.flags.test(RealFlag::Overflow)) {
           context.messages.Say("real->integer conversion overflowed"_en_US);
-          return {};
+          return std::nullopt;
         }
         if (converted.flags.test(RealFlag::InvalidArgument)) {
           context.messages.Say(
               "real->integer conversion: invalid argument"_en_US);
-          return {};
+          return std::nullopt;
         }
         return {std::move(converted.value)};
       },
@@ -266,7 +266,7 @@ auto IntegerExpr<KIND>::Negate::FoldScalar(
   auto negated{c.Negate()};
   if (negated.overflow) {
     context.messages.Say("integer negation overflowed"_en_US);
-    return {};
+    return std::nullopt;
   }
   return {std::move(negated.value)};
 }
@@ -277,7 +277,7 @@ auto IntegerExpr<KIND>::Add::FoldScalar(FoldingContext &context,
   auto sum{a.AddSigned(b)};
   if (sum.overflow) {
     context.messages.Say("integer addition overflowed"_en_US);
-    return {};
+    return std::nullopt;
   }
   return {std::move(sum.value)};
 }
@@ -288,7 +288,7 @@ auto IntegerExpr<KIND>::Subtract::FoldScalar(FoldingContext &context,
   auto diff{a.SubtractSigned(b)};
   if (diff.overflow) {
     context.messages.Say("integer subtraction overflowed"_en_US);
-    return {};
+    return std::nullopt;
   }
   return {std::move(diff.value)};
 }
@@ -299,7 +299,7 @@ auto IntegerExpr<KIND>::Multiply::FoldScalar(FoldingContext &context,
   auto product{a.MultiplySigned(b)};
   if (product.SignedMultiplicationOverflowed()) {
     context.messages.Say("integer multiplication overflowed"_en_US);
-    return {};
+    return std::nullopt;
   }
   return {std::move(product.lower)};
 }
@@ -310,11 +310,11 @@ auto IntegerExpr<KIND>::Divide::FoldScalar(FoldingContext &context,
   auto qr{a.DivideSigned(b)};
   if (qr.divisionByZero) {
     context.messages.Say("integer division by zero"_en_US);
-    return {};
+    return std::nullopt;
   }
   if (qr.overflow) {
     context.messages.Say("integer division overflowed"_en_US);
-    return {};
+    return std::nullopt;
   }
   return {std::move(qr.quotient)};
 }
@@ -325,15 +325,15 @@ auto IntegerExpr<KIND>::Power::FoldScalar(FoldingContext &context,
   typename Scalar::PowerWithErrors power{a.Power(b)};
   if (power.divisionByZero) {
     context.messages.Say("zero to negative power"_en_US);
-    return {};
+    return std::nullopt;
   }
   if (power.overflow) {
     context.messages.Say("integer power overflowed"_en_US);
-    return {};
+    return std::nullopt;
   }
   if (power.zeroToZero) {
     context.messages.Say("integer 0**0"_en_US);
-    return {};
+    return std::nullopt;
   }
   return {std::move(power.power)};
 }
@@ -371,7 +371,7 @@ auto IntegerExpr<KIND>::Fold(FoldingContext &context) -> std::optional<Scalar> {
             return c;
           }
         }
-        return {};
+        return std::nullopt;
       },
       u_);
 }
@@ -461,7 +461,7 @@ auto RealExpr<KIND>::Divide::FoldScalar(FoldingContext &context,
 template<int KIND>
 auto RealExpr<KIND>::Power::FoldScalar(FoldingContext &context, const Scalar &a,
     const Scalar &b) -> std::optional<Scalar> {
-  return {};  // TODO
+  return std::nullopt;  // TODO
 }
 
 template<int KIND>
@@ -518,28 +518,108 @@ auto RealExpr<KIND>::Fold(FoldingContext &context) -> std::optional<Scalar> {
         if constexpr (evaluate::FoldableTrait<Ty>) {
           auto c{x.Fold(context)};
           if (c.has_value()) {
-            if (context.flushDenormalsToZero && c->IsDenormal()) {
-              u_ = Scalar{};
-            } else {
-              u_ = *c;
+            if (context.flushDenormalsToZero) {
+              *c = c->FlushDenormalToZero();
             }
+            u_ = *c;
             return c;
           }
         }
-        return {};
+        return std::nullopt;
       },
       u_);
 }
 
 template<int KIND>
+auto ComplexExpr<KIND>::Negate::FoldScalar(
+    FoldingContext &context, const Scalar &c) -> std::optional<Scalar> {
+  return {c.Negate()};
+}
+
+template<int KIND>
+auto ComplexExpr<KIND>::Add::FoldScalar(FoldingContext &context,
+    const Scalar &a, const Scalar &b) -> std::optional<Scalar> {
+  auto sum{a.Add(b, context.rounding)};
+  RealFlagWarnings(context, sum.flags, "complex addition");
+  return {std::move(sum.value)};
+}
+
+template<int KIND>
+auto ComplexExpr<KIND>::Subtract::FoldScalar(FoldingContext &context,
+    const Scalar &a, const Scalar &b) -> std::optional<Scalar> {
+  auto difference{a.Subtract(b, context.rounding)};
+  RealFlagWarnings(context, difference.flags, "complex subtraction");
+  return {std::move(difference.value)};
+}
+
+template<int KIND>
+auto ComplexExpr<KIND>::Multiply::FoldScalar(FoldingContext &context,
+    const Scalar &a, const Scalar &b) -> std::optional<Scalar> {
+  auto product{a.Multiply(b, context.rounding)};
+  RealFlagWarnings(context, product.flags, "complex multiplication");
+  return {std::move(product.value)};
+}
+
+template<int KIND>
+auto ComplexExpr<KIND>::Divide::FoldScalar(FoldingContext &context,
+    const Scalar &a, const Scalar &b) -> std::optional<Scalar> {
+  auto quotient{a.Divide(b, context.rounding)};
+  RealFlagWarnings(context, quotient.flags, "complex  division");
+  return {std::move(quotient.value)};
+}
+
+template<int KIND>
+auto ComplexExpr<KIND>::Power::FoldScalar(FoldingContext &context,
+    const Scalar &a, const Scalar &b) -> std::optional<Scalar> {
+  return std::nullopt;  // TODO
+}
+
+template<int KIND>
+auto ComplexExpr<KIND>::IntPower::FoldScalar(FoldingContext &context,
+    const Scalar &a, const ScalarConstant<Category::Integer> &b)
+    -> std::optional<Scalar> {
+  return std::visit(
+      [&](const auto &pow) -> std::optional<Scalar> {
+        auto power{evaluate::IntPower(a, pow)};
+        RealFlagWarnings(context, power.flags, "raising to integer power");
+        return {std::move(power.value)};
+      },
+      b.u);
+}
+
+template<int KIND>
+auto ComplexExpr<KIND>::CMPLX::FoldScalar(FoldingContext &context,
+    const PartScalar &a, const PartScalar &b) -> std::optional<Scalar> {
+  return {Scalar{a, b}};
+}
+
+template<int KIND>
 auto ComplexExpr<KIND>::Fold(FoldingContext &context) -> std::optional<Scalar> {
-  return {};  // TODO
+  return std::visit(
+      [&](auto &x) -> std::optional<Scalar> {
+        using Ty = typename std::decay<decltype(x)>::type;
+        if constexpr (std::is_same_v<Ty, Scalar>) {
+          return {x};
+        }
+        if constexpr (evaluate::FoldableTrait<Ty>) {
+          auto c{x.Fold(context)};
+          if (c.has_value()) {
+            if (context.flushDenormalsToZero) {
+              *c = c->FlushDenormalToZero();
+            }
+            u_ = *c;
+            return c;
+          }
+        }
+        return std::nullopt;
+      },
+      u_);
 }
 
 template<int KIND>
 auto CharacterExpr<KIND>::Fold(FoldingContext &context)
     -> std::optional<Scalar> {
-  return {};  // TODO
+  return std::nullopt;  // TODO
 }
 
 template<typename A>
@@ -570,11 +650,11 @@ auto Comparison<A>::FoldScalar(FoldingContext &c,
     case Relation::Greater:
       return {opr == RelationalOperator::NE || opr == RelationalOperator::GE ||
           opr == RelationalOperator::GT};
-    case Relation::Unordered: return {};
+    case Relation::Unordered: return std::nullopt;
     }
   }
   // TODO complex and character comparisons
-  return {};
+  return std::nullopt;
 }
 
 template<int KIND>
@@ -622,7 +702,7 @@ auto LogicalExpr<KIND>::Fold(FoldingContext &context) -> std::optional<Scalar> {
             return c;
           }
         }
-        return {};
+        return std::nullopt;
       },
       u_);
 }
@@ -633,7 +713,7 @@ std::optional<GenericScalar> GenericExpr::ScalarValue() const {
         if (auto c{x.ScalarValue()}) {
           return {GenericScalar{std::move(*c)}};
         }
-        return {};
+        return std::nullopt;
       },
       u);
 }
@@ -645,9 +725,7 @@ auto Expr<AnyKindType<CAT>>::ScalarValue() const -> std::optional<Scalar> {
         if (auto c{x.ScalarValue()}) {
           return {Scalar{std::move(*c)}};
         }
-        std::optional<Scalar> avoidBogusGCCWarning;  // ... with return {};
-        return avoidBogusGCCWarning;
-        ;
+        return std::nullopt;
       },
       u);
 }
@@ -660,9 +738,7 @@ auto Expr<AnyKindType<CAT>>::Fold(FoldingContext &context)
         if (auto c{x.Fold(context)}) {
           return {Scalar{std::move(*c)}};
         }
-        std::optional<Scalar> avoidBogusGCCWarning;  // ... with return {};
-        return avoidBogusGCCWarning;
-        ;
+        return std::nullopt;
       },
       u);
 }
@@ -673,7 +749,7 @@ std::optional<GenericScalar> GenericExpr::Fold(FoldingContext &context) {
         if (auto c{x.Fold(context)}) {
           return {GenericScalar{std::move(*c)}};
         }
-        return {};
+        return std::nullopt;
       },
       u);
 }
