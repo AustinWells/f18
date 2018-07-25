@@ -51,7 +51,7 @@ public:
       }
     }
     state.Say(MessageExpectedText{set_});
-    return {};
+    return std::nullopt;
   }
 
 private:
@@ -140,14 +140,14 @@ public:
       if (!at.has_value()) {
         at = nextCh.Parse(state);
         if (!at.has_value()) {
-          return {};
+          return std::nullopt;
         }
       }
       if (spaceSkipping) {
         if (**at == ' ') {
           at = nextCh.Parse(state);
           if (!at.has_value()) {
-            return {};
+            return std::nullopt;
           }
         } else if (mandatoryFreeFormSpace_) {
           MissingSpace(state);
@@ -157,7 +157,7 @@ public:
         at.reset();
       } else {
         state.Say(start, MessageExpectedText{str_, bytes_});
-        return {};
+        return std::nullopt;
       }
     }
     state.TokenMatched();
@@ -223,25 +223,25 @@ struct CharLiteralChar {
     auto at{state.GetLocation()};
     std::optional<const char *> och{nextCh.Parse(state)};
     if (!och.has_value()) {
-      return {};
+      return std::nullopt;
     }
     char ch{**och};
     if (ch == '\n') {
       state.Say(CharBlock{at, state.GetLocation()},
           "unclosed character constant"_err_en_US);
-      return {};
+      return std::nullopt;
     }
     if (ch != '\\') {
       return {Result::Bare(ch)};
     }
     if (!(och = nextCh.Parse(state)).has_value()) {
-      return {};
+      return std::nullopt;
     }
     ch = **och;
     if (ch == '\n') {
       state.Say(CharBlock{at, state.GetLocation()},
           "unclosed character constant"_err_en_US);
-      return {};
+      return std::nullopt;
     }
     if (std::optional<char> escChar{BackslashEscapeValue(ch)}) {
       return {Result::Escaped(*escChar)};
@@ -269,7 +269,7 @@ struct CharLiteralChar {
           ch = 16 * ch + HexadecimalDigitValue(**och);
         }
       } else {
-        return {};
+        return std::nullopt;
       }
     } else {
       state.Say(at, "bad escaped character"_en_US);
@@ -292,7 +292,7 @@ template<char quote> struct CharLiteral {
       }
       str += ch->ch;
     }
-    return {};
+    return std::nullopt;
   }
 };
 
@@ -317,30 +317,30 @@ struct BOZLiteral {
     const char *start{state.GetLocation()};
     std::optional<const char *> at{nextCh.Parse(state)};
     if (!at.has_value()) {
-      return {};
+      return std::nullopt;
     }
     if (**at == 'x' &&
         !state.IsNonstandardOk(
             LanguageFeature::BOZExtensions, "nonstandard BOZ literal"_en_US)) {
-      return {};
+      return std::nullopt;
     }
     if (baseChar(**at)) {
       at = nextCh.Parse(state);
       if (!at.has_value()) {
-        return {};
+        return std::nullopt;
       }
     }
 
     char quote = **at;
     if (quote != '\'' && quote != '"') {
-      return {};
+      return std::nullopt;
     }
 
     std::string content;
     while (true) {
       at = nextCh.Parse(state);
       if (!at.has_value()) {
-        return {};
+        return std::nullopt;
       }
       if (**at == quote) {
         break;
@@ -349,7 +349,7 @@ struct BOZLiteral {
         continue;
       }
       if (!IsHexadecimalDigit(**at)) {
-        return {};
+        return std::nullopt;
       }
       content += **at;
     }
@@ -359,14 +359,14 @@ struct BOZLiteral {
       if (!(at = nextCh.Parse(state)).has_value() || !baseChar(**at) ||
           !state.IsNonstandardOk(LanguageFeature::BOZExtensions,
               "nonstandard BOZ literal"_en_US)) {
-        return {};
+        return std::nullopt;
       }
       spaceCheck.Parse(state);
     }
 
     if (content.empty()) {
       state.Say(start, "no digit in BOZ literal"_err_en_US);
-      return {};
+      return std::nullopt;
     }
 
     std::uint64_t value{0};
@@ -374,13 +374,13 @@ struct BOZLiteral {
       digit = HexadecimalDigitValue(digit);
       if ((digit >> *shift) > 0) {
         state.Say(start, "bad digit in BOZ literal"_err_en_US);
-        return {};
+        return std::nullopt;
       }
       std::uint64_t was{value};
       value <<= *shift;
       if ((value >> *shift) != was) {
         state.Say(start, "excessive digits in BOZ literal"_err_en_US);
-        return {};
+        return std::nullopt;
       }
       value |= digit;
     }
@@ -395,7 +395,7 @@ constexpr struct DigitString {
   static std::optional<std::uint64_t> Parse(ParseState &state) {
     std::optional<const char *> firstDigit{digit.Parse(state)};
     if (!firstDigit.has_value()) {
-      return {};
+      return std::nullopt;
     }
     std::uint64_t value = **firstDigit - '0';
     bool overflow{false};
@@ -433,7 +433,7 @@ constexpr struct SkipDigitString {
         return {Success{}};
       }
     }
-    return {};
+    return std::nullopt;
   }
 } skipDigitString;
 
@@ -470,7 +470,7 @@ struct SignedIntLiteralConstantWithoutKind {
     if (minus.Parse(state)) {
       negate = true;
     } else if (!plus.Parse(state).has_value()) {
-      return {};
+      return std::nullopt;
     }
     return SignedInteger(digitString.Parse(state), at, negate, state);
   }
@@ -484,7 +484,7 @@ struct SignedDigitString {
   static std::optional<std::int64_t> Parse(ParseState &state) {
     std::optional<const char *> sign{state.PeekAtNextChar()};
     if (!sign.has_value()) {
-      return {};
+      return std::nullopt;
     }
     bool negate{**sign == '-'};
     if (negate || **sign == '+') {
@@ -502,7 +502,7 @@ struct DigitStringIgnoreSpaces {
     static constexpr auto getFirstDigit{space >> digit};
     std::optional<const char *> firstDigit{getFirstDigit.Parse(state)};
     if (!firstDigit.has_value()) {
-      return {};
+      return std::nullopt;
     }
     std::uint64_t value = **firstDigit - '0';
     bool overflow{false};
@@ -557,12 +557,12 @@ struct HollerithLiteral {
     std::optional<std::uint64_t> charCount{
         DigitStringIgnoreSpaces{}.Parse(state)};
     if (!charCount.has_value() || *charCount < 1) {
-      return {};
+      return std::nullopt;
     }
     static constexpr auto letterH{"h"_ch};
     std::optional<const char *> h{letterH.Parse(state)};
     if (!h.has_value()) {
-      return {};
+      return std::nullopt;
     }
     std::string content;
     for (auto j{*charCount}; j-- > 0;) {
@@ -572,14 +572,14 @@ struct HollerithLiteral {
         std::optional<int> chBytes{EUC_JPCharacterBytes(p)};
         if (!chBytes.has_value()) {
           state.Say(start, "bad EUC_JP characters in Hollerith"_err_en_US);
-          return {};
+          return std::nullopt;
         }
         bytes = *chBytes;
       } else if (state.encoding() == Encoding::UTF8) {
         std::optional<int> chBytes{UTF8CharacterBytes(p)};
         if (!chBytes.has_value()) {
           state.Say(start, "bad UTF-8 characters in Hollerith"_err_en_US);
-          return {};
+          return std::nullopt;
         }
         bytes = *chBytes;
       }
@@ -588,7 +588,7 @@ struct HollerithLiteral {
         if (!at.has_value() || !isprint(**at)) {
           state.Say(
               start, "insufficient or bad characters in Hollerith"_err_en_US);
-          return {};
+          return std::nullopt;
         }
         content += **at;
       } else {
@@ -611,7 +611,7 @@ constexpr struct ConsumedAllInputParser {
     if (state.IsAtEnd()) {
       return {Success{}};
     }
-    return {};
+    return std::nullopt;
   }
 } consumedAllInput;
 
@@ -625,7 +625,7 @@ template<char goal> struct SkipPast {
         return {Success{}};
       }
     }
-    return {};
+    return std::nullopt;
   }
 };
 
@@ -640,7 +640,7 @@ template<char goal> struct SkipTo {
       }
       state.UncheckedAdvance();
     }
-    return {};
+    return std::nullopt;
   }
 };
 
