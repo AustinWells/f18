@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "expression.h"
+#include "int-power.h"
 #include "variable.h"
 #include "../common/idioms.h"
 #include "../parser/characters.h"
@@ -467,7 +468,13 @@ template<int KIND>
 auto RealExpr<KIND>::IntPower::FoldScalar(FoldingContext &context,
     const Scalar &a, const ScalarConstant<Category::Integer> &b)
     -> std::optional<Scalar> {
-  return {};  // TODO
+  return std::visit(
+      [&](const auto &pow) -> std::optional<Scalar> {
+        auto power{evaluate::IntPower(a, pow)};
+        RealFlagWarnings(context, power.flags, "raising to integer power");
+        return {std::move(power.value)};
+      },
+      b.u);
 }
 
 template<int KIND>
@@ -500,7 +507,6 @@ auto RealExpr<KIND>::AIMAG::FoldScalar(
   return {z.AIMAG()};
 }
 
-// TODO: generalize over Expr<A> rather than instantiating same for each
 template<int KIND>
 auto RealExpr<KIND>::Fold(FoldingContext &context) -> std::optional<Scalar> {
   return std::visit(
@@ -512,7 +518,11 @@ auto RealExpr<KIND>::Fold(FoldingContext &context) -> std::optional<Scalar> {
         if constexpr (evaluate::FoldableTrait<Ty>) {
           auto c{x.Fold(context)};
           if (c.has_value()) {
-            u_ = *c;
+            if (context.flushDenormalsToZero && c->IsDenormal()) {
+              u_ = Scalar{};
+            } else {
+              u_ = *c;
+            }
             return c;
           }
         }
